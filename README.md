@@ -1,28 +1,27 @@
 # DeQ
 
-Your homelab's new start page. One place for links, stats, files, and automation.
+Homelab admin deck for low-power devices.
 
-Ultra-lightweight manager for files, scheduled backups, and other essential tasks. Single Python file, ~300KB, no dependencies.
+A small footprint dashboard with zero dependencies, that can live on your low power host alongside Pi-Hole.
 
 **Website:** [deq.rocks](https://deq.rocks) · **Support:** [Patreon](https://patreon.com/deqrocks)
 
 ![DeQ Screenshot](assets/screenshot.webp)
 
-## Security
+## Concept
 
-DeQ runs as root and provides full filesystem access through the file manager. This is by design for homelab management tasks like backups and file transfers.
+**DeQ runs bare metal, not in Docker.**
 
-- DeQ has no built-in authentication
+It's designed for low-power devices that are already online 24/7 – a Pi, a mini PC, an old laptop. These devices give you always-on access to your homelab via Tailscale or LAN, without the overhead of a full server.
+
+Docker would require a host capable of running Docker in the first place, plus workarounds for features that need direct hardware access: Wake-on-LAN requires raw sockets, the file manager needs your filesystem, SSH and rsync run as host processes, and shutdown commands don't work from inside a container.
+
+**This comes with responsibility.**
+
+DeQ runs as root and has direct access to your system. That's what makes features like WOL, file transfers, and remote shutdown possible – but it also means you should never expose it to the public internet.
+
 - Use Tailscale or another VPN for remote access
 - Only run DeQ on trusted networks
-
-## Why DeQ?
-
-DeQ is a single Python file with zero dependencies. No Docker, no Node.js, no database — just Python and a web browser.
-
-This makes it ideal for low-power setups. Run it on a Raspberry Pi Zero 2W (150mA idle), an OpenWRT router, or any device that's already running 24/7. Use Wake-on-LAN and scheduled tasks to power on your storage servers only when needed, run backups, and shut them down again.
-
-With electricity prices rising and hardware costs increasing, every watt counts. A NAS idling at 10W costs €30-40/year. If it only needs to run for daily backups, DeQ can wake it, sync your data, and shut it down — automatically.
 
 ## Features
 
