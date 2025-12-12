@@ -177,7 +177,7 @@ def get_remote_stats(ip, user, port=22):
     """Get stats from remote device via SSH."""
     try:
         # Get more meminfo lines for Synology compatibility (no MemAvailable)
-        cmd = "cat /proc/loadavg; echo '---'; cat /proc/meminfo | head -10; echo '---'; cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -1; echo '---'; df -B1 / | tail -1; echo '---'; cat /proc/uptime"
+        cmd = "cat /proc/loadavg; echo '---'; cat /proc/meminfo | head -10; echo '---'; cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | head -1; echo '---'; df -B1 / | tail -1; echo '---'; cat /proc/uptime; echo '---'; nproc --all"
         result = subprocess.run(
             ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=3",
              "-p", str(port), f"{user}@{ip}", cmd],
@@ -192,8 +192,11 @@ def get_remote_stats(ip, user, port=22):
 
         # CPU (load / cpu_count * 100)
         load = float(parts[0].strip().split()[0])
-        cpu_count = os.cpu_count() or 4
-        stats["cpu"] = min(100, int(load / cpu_count * 100))
+        try:
+            remote_cpu_count = int(parts[-1].strip())
+            cpu_count = remote_cpu_count if remote_cpu_count > 0 else 4 # Fallback to 4 if error
+        except ValueError:
+            cpu_count = 4 # Default fallback        stats["cpu"] = min(100, int(load / cpu_count * 100))
 
         # RAM - handle both modern (MemAvailable) and older kernels (MemFree+Buffers+Cached)
         meminfo = {}
