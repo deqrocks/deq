@@ -196,7 +196,9 @@ def get_remote_stats(ip, user, port=22):
             remote_cpu_count = int(parts[-1].strip())
             cpu_count = remote_cpu_count if remote_cpu_count > 0 else 4 # Fallback to 4 if error
         except ValueError:
-            cpu_count = 4 # Default fallback        stats["cpu"] = min(100, int(load / cpu_count * 100))
+            cpu_count = 4 # Default fallback        
+            
+        stats["cpu"] = min(100, int(load / cpu_count * 100))
 
         # RAM - handle both modern (MemAvailable) and older kernels (MemFree+Buffers+Cached)
         meminfo = {}
