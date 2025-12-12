@@ -1265,6 +1265,22 @@ HTML_PAGE = '''<!DOCTYPE html>
         }
         
         /* Devices */
+        .devices-list {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+
+        .devices-list.layout-2 {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        @media (max-width: 768px) {
+            .devices-list.layout-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+
         .device-card {
             background: var(--bg-secondary);
             border: 1px solid var(--border);
@@ -2708,6 +2724,9 @@ HTML_PAGE = '''<!DOCTYPE html>
                     <button class="icon-btn section-add section-toggle" id="devices-toggle" title="Hide section" onclick="toggleSection('devices')">
                         <i data-lucide="eye-off"></i>
                     </button>
+                    <button class="icon-btn section-add layout-btn" id="device-layout-btn" title="Change device layout" onclick="cycleDeviceLayout()">
+                        <span id="device-layout-label">1</span>
+                    </button>
                 </div>
                 <button class="icon-btn section-add" id="add-device" title="Add device">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2716,7 +2735,7 @@ HTML_PAGE = '''<!DOCTYPE html>
                     </svg>
                 </button>
             </div>
-            <div id="devices-list"></div>
+            <div class="devices-list"  id="devices-list"></div>
         </section>
 
         <!-- Tasks Section -->
@@ -3378,6 +3397,24 @@ HTML_PAGE = '''<!DOCTYPE html>
             saveConfig();
         }
 
+        function applyDeviceLayout() {
+            const list = document.getElementById('devices-list');
+            const layout = config.settings.device_layout || '1';
+            if (list) {
+                list.classList.toggle('layout-2', layout === '2');
+            }
+            const label = document.getElementById('device-layout-label');
+            if (label) label.textContent = layout;
+        }
+
+        function cycleDeviceLayout() {
+            const current = config.settings.device_layout || '1';
+            const next = current === '2' ? '1' : '2';
+            config.settings.device_layout = next;
+            applyDeviceLayout();
+            saveConfig();
+        }
+
         function toggleSection(section) {
             const key = `show_${section}`;
             const current = config.settings[key] !== false; // default true
@@ -3858,6 +3895,7 @@ HTML_PAGE = '''<!DOCTYPE html>
                 </div>
                 `;
             }).join('');
+            applyDeviceLayout();
             refreshIcons();
         }
 
