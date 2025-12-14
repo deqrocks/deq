@@ -1,11 +1,12 @@
 # DeQ
+
+![DeQ Hero](assets/DeQ-Hero.jpg)
+
 <p align="center">A bare-metal homelab admin deck with root access. Minimal footprint, runs anywhere.<p align="center"></p>
 
 <p align="center">Small enough to live alongside Pi-hole on a Pi Zero. Capable enough to control your entire network.</p>
 
-![DeQ Hero](assets/DeQ-Hero.jpg)
-
-Website: [deq.rocks](https://deq.rocks) · Support: [Patreon](https://patreon.com/deqrocks)
+<p align="center">**Website:** [deq.rocks](https://deq.rocks) · **Support:** [Patreon](https://patreon.com/deqrocks)</p>
 
 ## Concept
 
@@ -227,6 +228,10 @@ Or as single command
 ```bash
 sudo systemctl stop deq && sudo systemctl disable deq && sudo rm /etc/systemd/system/deq.service && sudo rm -rf /opt/deq && sudo systemctl daemon-reload
 ```
+
+## Disclaimer
+
+DeQ is provided "as is" without warranty. The authors are not liable for any damages resulting from its use. By installing DeQ, you accept full responsibility for securing your system. See [LICENSE](LICENSE) for details.
 
 ## License
 
