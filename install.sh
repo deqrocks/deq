@@ -6,8 +6,22 @@
 set -e
 
 echo "================================================================"
-echo "         DeQ - Homelab Dashboard Installer                 "
+echo "              DeQ - Admin Dashboard Installer                   "
 echo "================================================================"
+echo "                    DeQ RUNS AS ROOT!                           "
+echo "          DO NOT directly expose to public internet!            "
+echo "Learn about VPN, Wireguard and Tailscale before installing DeQ! "
+echo "                     THIS IS NO JOKE!                           "
+echo "================================================================"
+echo "  By installing, you accept full responsibility for securing    "
+echo "  your system. The authors are not liable for any damages.      "
+echo "================================================================"
+echo ""
+read -p "I understand the risks and want to continue [y/N]: " confirm
+if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo "Installation cancelled."
+    exit 1
+fi
 echo ""
 
 # Check if running as root
