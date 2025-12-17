@@ -36,7 +36,7 @@ DeQ runs as root and has direct access to your system. That's what makes feature
 ## Installation
 
 ```bash
-wget https://github.com/deqrocks/deq/releases/download/stable/deq.zip
+wget https://github.com/deqrocks/deq/releases/latest/download/deq.zip
 unzip deq.zip -d deq && cd deq
 sudo ./install.sh
 ```
