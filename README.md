@@ -1,26 +1,36 @@
 # DeQ
-<p align="center">Rethinking homelab tools. Less complexity, more control.<p align="center"></p>
+<p align="center">Rethinking homelab tools. Less complexity, more control.</p>
 
-<p align="center">A bare-metal homelab admin deck with root access and Android monitoring app. Small enough to live alongside Pi-hole on a Pi Zero. Capable enough to control your entire network. Get notifications on your smartphone when things go wrong.</p>
+<p align="center">A bare-metal admin deck with native Android companion app.<br>
+Full file manager. Task and Backup scheduling. Container control. Push alerts to your phone.</p>
+
+<p align="center">No Node.js. No React. No Docker. No database. No dependencies.<br>
+One Python file. 300KB. 20MB RAM.</p>
+
+<p align="center"><strong>Runs on your main server. Runs on a Pi Zero. Your call.</strong></p>
 
 ![DeQ Hero](assets/DeQ-Hero.jpg)
 
-**Website:** [deq.rocks](https://deq.rocks) · **Support:** [Patreon](https://patreon.com/deqrocks)
+**Website:** [deq.rocks](https://deq.rocks) · **FAQ:** [deq.rocks/faq](https://deq.rocks/faq.html) · **Support:** [Patreon](https://patreon.com/deqrocks)
 
 ## Concept
 
 **DeQ runs bare metal, not in Docker.**
 
 It's designed for low-power devices that are already online 24/7 - a Pi, a mini PC, even a WRT router. These give you always-on access to your homelab via Tailscale or LAN, without the overhead of a full server.
-Docker would add overhead and break core features: Wake-on-LAN needs raw sockets, the file manager needs your filesystem, SSH and rsync run as host processes, and shutdown commands don't work from inside a container.
-DeQ bridges monitoring and control - with a minimal footprint as its core principle. One file, focused scope, no bloat.
 
-**This comes with responsibility.**
+Docker would negate its own isolation benefits while adding overhead. To provide actual system control, a containerized DeQ would need host networking, Docker socket access, privileged mode, and volume mounts for every path - at that point, you're running a "container" with full host access anyway, just with extra steps.
 
-DeQ runs as root and has direct access to your system. That's what makes features like WOL, file transfers, and remote shutdown possible - but it also means you should never expose it to the public internet.
+**DeQ stays up when everything else breaks.**
 
-- Use Tailscale, Wireguard or another VPN for remote access
-- Only run DeQ on trusted networks
+When your Docker daemon crashes, when an update borks the container network, when Portainer can't reach its own backend - your containerized dashboard goes down with the ship. DeQ, running as a simple systemd service, is often still reachable when everything else is on fire.
+
+**Yes, it runs as root. Here's why that's okay.**
+
+The security model is "trusted tool on a trusted network." DeQ assumes you're behind a VPN (Tailscale, WireGuard). The code is auditable - all 300KB of it. A technically competent user can read exactly what DeQ does in an afternoon. Compare that to trusting a 200MB Docker image with layers of abstraction you'll never inspect.
+
+- Never expose DeQ to the public internet
+- Use Tailscale, WireGuard, or another VPN for remote access
 
 ## Features
 
@@ -172,13 +182,15 @@ Click "Reset to Defaults" to restore the original dark theme.
 
 ## Mobile App
 
-Control your homelab from your phone - check stats, wake devices, manage containers.
+Get notified when something goes wrong - even when you're not home. The app monitors your homelab in the background and alerts you when devices go offline, containers stop, or backups fail.
 
 ### Android
 
 Native Android apps for DeQ - faster startup, background notifications, no browser needed.
 
-**Download:** Free app from the releases on github, Pro app coming soon on Playstore**
+**Compatible with Android 8+** - Perfect for repurposing old phones or tablets as wall-mounted status displays.
+
+**Download:** [Free app on GitHub]https://github.com/deqrocks/deq/releases/download/android-apk-v0.9.2/DeQ-v0.9.2.apk) · Pro app coming soon on Google Play
 
 #### Free vs Pro
 
@@ -187,6 +199,10 @@ Native Android apps for DeQ - faster startup, background notifications, no brows
 | WebView Dashboard | ✓ | ✓ |
 | Background Polling | 30 min | custom |
 | Push Notifications | ✓ | ✓ |
+| Home Screen Widgets | ✗ | ✓ |
+| Lock Screen Widgets | ✗ | ✓ |
+| Live Wallpaper | ✗ | ✓ |
+| Screen Saver (Daydream) | ✗ | ✓ |
 | Android Auto | ✗ | ✓ |
 
 **Why a paid version?**
@@ -195,8 +211,35 @@ Unlike Patreon tiers with "exclusive updates" or "Discord access", the paid app 
 
 - **Custom Polling**: Set your own interval - from seconds to hours
 - **Android Auto**: Check your homelab status from your car's dashboard
+- **Home Screen Widgets**: 5 different widget styles - from minimal dots to detailed lists
+- **Lock Screen Widgets**: Same widgets on your lock screen (Android 16+)
+- **Live Wallpaper**: Animated status display as your home screen background
+- **Screen Saver**: Ambient display with BCD clock when charging - perfect for a wall-mounted status display
 
 Your support keeps this project alive as a full-time effort.
+
+#### Widgets
+
+DeQ Pro includes 5 widget styles:
+
+| Widget | Description |
+|--------|-------------|
+| **DeQ Less** | Minimal colored dots - green/red for online/offline, hue gradient for CPU/RAM/temp |
+| **DeQ List** | Scrollable list with device names and stats |
+| **DeQ Ultra** | Q-symbols: rotated = online, normal = offline |
+| **DeQ Mega** | Green squares for online devices only |
+| **DeQ Containers** | Green circles for running containers only |
+
+All widgets support custom background color, transparency, and corner radius.
+
+#### Live Wallpaper & Screen Saver
+
+Turn an old phone into a wall-mounted status display:
+
+- **DeQ Live**: Animated wallpaper showing device squares and container circles
+- **DeQ Ambient**: Screen saver (Daydream) with BCD binary clock, breathing animations, and drift movement for OLED burn-in protection
+
+Both feature pure black backgrounds (#000000) for OLED efficiency and auto-scaling for any number of devices.
 
 ### iOS
 
@@ -243,7 +286,7 @@ All data is stored in `/opt/deq/config.json`. To backup: just copy `config.json`
 To update DeQ, download the latest release and run the installer again:
 
 ```bash
-wget https://github.com/deqrocks/deq/releases/download/stable/deq.zip
+wget https://github.com/deqrocks/deq/releases/latest/download/deq.zip
 unzip deq.zip -d deq && cd deq
 sudo ./install.sh
 ```
