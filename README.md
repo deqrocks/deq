@@ -1,5 +1,4 @@
 # DeQ
-<p align="center">Rethinking homelab tools. Less complexity, more control.</p>
 
 <p align="center">A bare-metal admin deck with native Android companion app.<br>
 Full file manager. Task and Backup scheduling. Container control. Push alerts to your phone.</p>
@@ -190,7 +189,7 @@ Native Android apps for DeQ - faster startup, background notifications, no brows
 
 **Compatible with Android 8+** - Perfect for repurposing old phones or tablets as wall-mounted status displays.
 
-**Download:** [Free app on GitHub]https://github.com/deqrocks/deq/releases/download/android-apk-v0.9.2/DeQ-v0.9.2.apk) · Pro app coming soon on Google Play
+**Download:** [Free app on GitHub](https://github.com/deqrocks/deq/releases/download/android-apk-v0.9.2/DeQ-v0.9.2.apk) · Pro app coming soon on Google Play
 
 #### Free vs Pro
 
