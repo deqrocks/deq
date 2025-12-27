@@ -21,7 +21,7 @@
 ## Features
 
 - **Android Companion app** - free app for your smartphone to manage your servers or get notified when things go wrong
-- **Device Control** - Wake-on-LAN, shutdown, Docker start/stop
+- **Device Control** - Wake-on-LAN, shutdown, suspend, Docker start/stop
 - **Scheduled Tasks** - Automated backups, wake and shutdown
 - **File Manager** - Dual-pane file browser, copy/move/upload between devices
 - **System Stats** - CPU, RAM, temperature, disk usage
@@ -153,16 +153,16 @@ sudo chmod 600 /root/.ssh/id_ed25519
 sudo ssh user@device-ip 'echo OK'
 ```
 
-**Enable passwordless sudo for shutdown (if needed on target devices):**
+**Enable passwordless sudo (if needed on target devices):**
 
-DeQ uses `sudo systemctl poweroff` to power off remote devices. If shutdown doesn't work, the SSH user may need passwordless sudo. Run this on the target device:
+DeQ uses `sudo` for power control and SMART disk monitoring. If your SSH user isn't root, run this on the target device:
 
 ```bash
-echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl poweroff" | sudo tee /etc/sudoers.d/deq-shutdown
-sudo chmod 440 /etc/sudoers.d/deq-shutdown
+echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl suspend, /usr/sbin/smartctl" | sudo tee /etc/sudoers.d/deq
+sudo chmod 440 /etc/sudoers.d/deq
 ```
 
-This grants access only to the poweroff command, nothing else.
+This grants access only to power commands and disk health monitoring, nothing else.
 
 ## Remote Access
 
@@ -347,10 +347,10 @@ sudo systemctl stop deq && sudo systemctl disable deq && sudo rm /etc/systemd/sy
 
 **Clean up remote devices (optional):**
 
-If you configured passwordless sudo for shutdown on target devices, you can remove it:
+If you configured passwordless sudo on target devices, you can remove it:
 
 ```bash
-sudo rm /etc/sudoers.d/deq-shutdown
+sudo rm /etc/sudoers.d/deq
 ```
 
 ## Disclaimer
