@@ -32,6 +32,8 @@ discovery
 - **Quick Stuff** - Bookmark and script runner buttons with support for Lucide, Dash...
 - **PWA Support** - Install as app on any device
 - **Admin Auth** - Adds an additional security layer
+<br><br>
+
 
 ## Concept
 
@@ -41,7 +43,7 @@ discovery
 - Use what’s there. Move fast. Make it useful.
 
 DeQ is an ultra-lightweight network control layer that exposes the raw power of SSH on mobile devices — without unnecessary abstraction.
-
+<br><br>
 
 ### Architecture
 
@@ -60,7 +62,7 @@ It currently sits at around 350 KB.
 
 A typical fresh installation, managing a few devices, containers, and tasks,
 uses roughly 20 MB of RAM and virtually no CPU.
-
+<br><br>
 
 ### Connectivity
 
