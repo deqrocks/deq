@@ -9,7 +9,7 @@ connected to a native Android app, Wear OS, and Android Auto.
 <strong>Zero dependencies. Dynamic config. No YAML.</strong>
 </p>
 
-![DeQ Hero](assets/DeQ-Hero.jpg)
+![DeQ Hero](assets/DeQ-Hero-ambient.jpg)
 
 <p align="center">
 <a href="https://deq.rocks">Website</a> ·
