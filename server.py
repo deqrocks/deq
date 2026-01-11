@@ -32,7 +32,7 @@ SCRIPTS_DIR = f"{DATA_DIR}/scripts"
 PASSWORD_FILE = f"{DATA_DIR}/.password"
 SESSION_SECRET_FILE = f"{DATA_DIR}/.session_secret"
 SESSION_COOKIE_NAME = "deq_session"
-VERSION = "0.9.11"
+VERSION = "0.9.12"
 
 # SSH ControlMaster for connection reuse (reduces overhead when File Manager makes many SSH calls)
 SSH_CONTROL_OPTS = ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/deq-ssh-%r@%h:%p", "-o", "ControlPersist=60", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2"]
@@ -398,7 +398,8 @@ DEFAULT_CONFIG = {
     "settings": {
         "theme": "dark",
         "text_color": "#e0e0e0",
-        "accent_color": "#2ed573"
+        "accent_color": "#2ed573",
+        "section_order": ["devices", "links", "quick_actions", "tasks"]
     },
     "links": [],
     "quick_actions": [],
@@ -422,6 +423,10 @@ def load_config():
             for key in DEFAULT_CONFIG:
                 if key not in cfg:
                     cfg[key] = DEFAULT_CONFIG[key]
+            # Merge settings with defaults
+            for key in DEFAULT_CONFIG.get('settings', {}):
+                if key not in cfg.get('settings', {}):
+                    cfg['settings'][key] = DEFAULT_CONFIG['settings'][key]
     else:
         cfg = DEFAULT_CONFIG.copy()
         cfg["devices"] = []
@@ -1354,7 +1359,8 @@ def get_health_status():
             "stopped": containers_stopped
         },
         "tasks": tasks,
-        "timestamp": int(time.time())
+        "timestamp": int(time.time()),
+        "extensions": get_extension_sections_html()
     }
 
 def send_wol(mac, broadcast="255.255.255.255"):
@@ -2133,6 +2139,211 @@ class TaskScheduler:
 
 # Global scheduler instance
 task_scheduler = TaskScheduler()
+
+
+# === EXTENSIONS ===
+EXTENSIONS_DIR = f"{DATA_DIR}/extensions"
+extension_sections = []
+
+class DeqAPI:
+    """API object passed to extensions."""
+
+    @property
+    def devices(self):
+        return CONFIG.get('devices', [])
+
+    @property
+    def config(self):
+        return get_config_with_defaults()
+
+    def device_status(self, device_id):
+        """Get cached status for a device."""
+        return device_status_cache.get(device_id)
+
+    def is_online(self, device_id):
+        """Check if device is online."""
+        status = self.device_status(device_id)
+        return status.get('online') if status else None
+
+    def wol(self, device_id):
+        """Send Wake-on-LAN packet to device."""
+        dev = self._get_device(device_id)
+        if not dev:
+            return {"success": False, "error": "Device not found"}
+        wol = dev.get('wol', {})
+        if not wol.get('mac'):
+            return {"success": False, "error": "WOL not configured"}
+        try:
+            send_wol(wol['mac'], wol.get('broadcast', '255.255.255.255'))
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def shutdown(self, device_id):
+        """Shutdown device via SSH (or local for host)."""
+        dev = self._get_device(device_id)
+        if not dev:
+            return {"success": False, "error": "Device not found"}
+        if dev.get('is_host'):
+            subprocess.Popen(["sudo", "shutdown", "-h", "now"])
+            return {"success": True}
+        ssh = dev.get('ssh', {})
+        if not ssh.get('user'):
+            return {"success": False, "error": "SSH not configured"}
+        try:
+            run_ssh_command(dev['ip'], ssh['user'], ssh.get('port', 22),
+                          "sudo shutdown -h now", timeout=10)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def suspend(self, device_id):
+        """Suspend device via SSH (or local for host)."""
+        dev = self._get_device(device_id)
+        if not dev:
+            return {"success": False, "error": "Device not found"}
+        if dev.get('is_host'):
+            subprocess.Popen(["sudo", "systemctl", "suspend"])
+            return {"success": True}
+        ssh = dev.get('ssh', {})
+        if not ssh.get('user'):
+            return {"success": False, "error": "SSH not configured"}
+        try:
+            run_ssh_command(dev['ip'], ssh['user'], ssh.get('port', 22),
+                          "sudo systemctl suspend", timeout=10)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def docker(self, device_id, container, action):
+        """Control Docker container."""
+        if action not in ('start', 'stop', 'status'):
+            return {"success": False, "error": "Invalid action"}
+
+        # Validate container name to prevent command injection
+        # Docker container names: [a-zA-Z0-9][a-zA-Z0-9_.-]*
+        if not container or not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9_.-]*$', container):
+            return {"success": False, "error": "Invalid container name"}
+
+        dev = self._get_device(device_id)
+        if not dev:
+            return {"success": False, "error": "Device not found"}
+        try:
+            if dev.get('is_host'):
+                if action == 'status':
+                    cmd = ["docker", "inspect", "-f", "{{.State.Status}}", container]
+                else:
+                    cmd = ["docker", action, container]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if action == 'status':
+                    return {"success": True, "status": result.stdout.strip()}
+                return {"success": result.returncode == 0, "error": result.stderr if result.returncode != 0 else None}
+            else:
+                ssh = dev.get('ssh', {})
+                if not ssh.get('user'):
+                    return {"success": False, "error": "SSH not configured"}
+                if action == 'status':
+                    cmd = f"docker inspect -f '{{{{.State.Status}}}}' '{container}'"
+                else:
+                    cmd = f"docker {action} '{container}'"
+                result = run_ssh_command(dev['ip'], ssh['user'], ssh.get('port', 22), cmd, timeout=30)
+                if action == 'status':
+                    return {"success": True, "status": result.strip()}
+                return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def ssh(self, device_id, command):
+        """Execute command on device via SSH (or local shell for host)."""
+        dev = self._get_device(device_id)
+        if not dev:
+            return False, "", "Device not found"
+
+        if dev.get('is_host'):
+            try:
+                result = subprocess.run(
+                    command, shell=True,
+                    capture_output=True, text=True, timeout=30
+                )
+                return result.returncode == 0, result.stdout, result.stderr
+            except Exception as e:
+                return False, "", str(e)
+
+        ssh_cfg = dev.get('ssh', {})
+        if not ssh_cfg.get('user'):
+            return False, "", "SSH not configured"
+
+        try:
+            result = run_ssh_command(dev['ip'], ssh_cfg['user'], ssh_cfg.get('port', 22), command, timeout=30)
+            return True, result, ""
+        except Exception as e:
+            return False, "", str(e)
+
+    def register_section(self, id, title, icon, render):
+        """Register a dashboard section."""
+        extension_sections.append({
+            "id": f"ext:{id}",
+            "title": title,
+            "icon": icon,
+            "render": render
+        })
+
+    def _get_device(self, device_id):
+        return next((d for d in CONFIG.get('devices', []) if d['id'] == device_id), None)
+
+# Global API instance
+deq = DeqAPI()
+
+def load_extensions():
+    """Load all extensions from extensions directory."""
+    global extension_sections
+    extension_sections = []
+
+    if not os.path.exists(EXTENSIONS_DIR):
+        os.makedirs(EXTENSIONS_DIR, exist_ok=True)
+        return
+
+    for filepath in sorted(glob.glob(f"{EXTENSIONS_DIR}/*.py")):
+        try:
+            filename = os.path.basename(filepath)
+            ext_name = filename[:-3]
+
+            with open(filepath, 'r') as f:
+                code = f.read()
+
+            namespace = {"deq": deq, "__name__": ext_name}
+            exec(code, namespace)
+
+            if 'register' in namespace:
+                namespace['register'](deq)
+
+            print(f"[Extensions] Loaded: {ext_name}")
+        except Exception as e:
+            print(f"[Extensions] Failed to load {filepath}: {e}")
+
+def get_extension_sections_html():
+    """Render all extension sections."""
+    sections = []
+    for s in extension_sections:
+        try:
+            html = s["render"]()
+            sections.append({
+                "id": s["id"],
+                "title": s["title"],
+                "icon": s["icon"],
+                "html": html
+            })
+        except Exception as e:
+            sections.append({
+                "id": s["id"],
+                "title": s["title"],
+                "icon": s["icon"],
+                "html": f'<div class="extension-error">Error: {e}</div>'
+            })
+    return sections
+
+# Load extensions at startup
+load_extensions()
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -3034,6 +3245,31 @@ def get_html_page():
         .edit-mode .icon-btn.section-add,
         .edit-mode .icon-btn.section-add svg {
             color: var(--text-primary);
+        }
+
+        /* Section Drag & Drop */
+        .edit-mode .section {
+            cursor: grab;
+        }
+
+        .edit-mode .section.dragging {
+            opacity: 0.5;
+            cursor: grabbing;
+        }
+
+        .edit-mode .section.drag-over {
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 2px var(--accent-muted);
+        }
+
+        /* Extension Sections */
+        .extension-error {
+            padding: 12px;
+            background: rgba(255, 100, 100, 0.1);
+            border: 1px solid rgba(255, 100, 100, 0.3);
+            border-radius: 6px;
+            color: #ff6464;
+            font-size: 13px;
         }
 
         /* Links */
@@ -4872,69 +5108,8 @@ def get_html_page():
             </div>
         </header>
 
-        <!-- Links -->
-        <section class="section" id="links-section">
-            <div class="section-header">
-                <div class="section-header-left">
-                    <span class="section-title">Links</span>
-                    <button class="icon-btn section-add section-toggle" id="links-toggle" title="Hide section" onclick="toggleSection('links')">
-                        <i data-lucide="eye-off"></i>
-                    </button>
-                    <button class="icon-btn section-add" id="mono-toggle" title="Toggle monochrome icons" onclick="toggleMonochrome()">
-                        <i data-lucide="palette"></i>
-                    </button>
-                </div>
-                <button class="icon-btn section-add icon-plus" id="add-link" title="Add link"></button>
-            </div>
-            <div class="cards-grid" id="cards-grid"></div>
-        </section>
-
-        <!-- Quick Actions -->
-        <section class="section" id="actions-section">
-            <div class="section-header">
-                <div class="section-header-left">
-                    <span class="section-title">Scripts</span>
-                    <button class="icon-btn section-add section-toggle" id="actions-toggle" title="Hide section" onclick="toggleSection('actions')">
-                        <i data-lucide="eye-off"></i>
-                    </button>
-                </div>
-                <button class="icon-btn section-add" id="scan-actions" title="Scan for scripts" onclick="scanQuickActions()">
-                    <i data-lucide="radar"></i>
-                </button>
-            </div>
-            <div class="cards-grid" id="actions-grid"></div>
-        </section>
-
-        <!-- Devices -->
-        <section class="section" id="devices-section">
-            <div class="section-header">
-                <div class="section-header-left">
-                    <span class="section-title">Devices</span>
-                    <button class="icon-btn section-add section-toggle" id="devices-toggle" title="Hide section" onclick="toggleSection('devices')">
-                        <i data-lucide="eye-off"></i>
-                    </button>
-                </div>
-                <button class="icon-btn section-add" id="scan-devices" title="Scan for devices" onclick="startOnboarding(true)">
-                    <i data-lucide="radar"></i>
-                </button>
-                <button class="icon-btn section-add icon-plus" id="add-device" title="Add device"></button>
-            </div>
-            <div id="devices-list"></div>
-        </section>
-
-        <!-- Tasks Section -->
-        <section class="section" id="tasks-section">
-            <div class="section-header">
-                <div class="section-header-left">
-                    <span class="section-title">Scheduled Tasks</span>
-                    <button class="icon-btn section-add section-toggle" id="tasks-toggle" title="Hide section" onclick="toggleSection('tasks')">
-                        <i data-lucide="eye-off"></i>
-                    </button>
-                </div>
-                <button class="icon-btn section-add task-add icon-plus" onclick="openTaskWizard()" title="Add task"></button>
-            </div>
-            <div id="tasks-list"></div>
-        </section>
+        <!-- Dynamic Sections Container -->
+        <div id="sections-container"></div>
 
         <!-- Theme Section (edit mode only) -->
         <section class="section theme-section" id="theme-section">
@@ -5686,6 +5861,17 @@ def get_html_page():
         const ICON_EDIT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg>`;
         const ICON_DELETE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="20" y1="4" x2="4" y2="20"></line><line x1="4" y1="4" x2="20" y2="20"></line></svg>`;
 
+        // Security: HTML escaping for user input
+        function escapeHTML(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         // Platform detection
         const ua = navigator.userAgent;
         const platform = {
@@ -5789,13 +5975,476 @@ def get_html_page():
             }
         }
 
+        // === Section System ===
+
+        const CORE_SECTIONS = {
+            devices: {
+                id: 'devices',
+                title: 'Devices',
+                icon: 'server',
+                render: () => renderDevicesContent(),
+                toggleKey: 'show_devices',
+                buttons: [
+                    { icon: 'radar', onclick: 'startOnboarding(true)', title: 'Scan for devices' },
+                    { icon: 'plus', onclick: 'openDeviceModal()', title: 'Add device', class: 'icon-plus' }
+                ]
+            },
+            links: {
+                id: 'links',
+                title: 'Links',
+                icon: 'bookmark',
+                render: () => renderLinksContent(),
+                toggleKey: 'show_links',
+                buttons: [
+                    { icon: 'palette', onclick: 'toggleMonochrome()', title: 'Toggle monochrome icons', id: 'mono-toggle' },
+                    { icon: 'plus', onclick: 'openLinkModal()', title: 'Add link', class: 'icon-plus' }
+                ]
+            },
+            quick_actions: {
+                id: 'quick_actions',
+                title: 'Scripts',
+                icon: 'terminal',
+                render: () => renderActionsContent(),
+                toggleKey: 'show_actions',
+                buttons: [
+                    { icon: 'radar', onclick: 'scanQuickActions()', title: 'Scan for scripts' }
+                ]
+            },
+            tasks: {
+                id: 'tasks',
+                title: 'Scheduled Tasks',
+                icon: 'calendar-clock',
+                render: () => renderTasksContent(),
+                toggleKey: 'show_tasks',
+                buttons: [
+                    { icon: 'plus', onclick: 'openTaskWizard()', title: 'Add task', class: 'icon-plus' }
+                ]
+            }
+        };
+
+        let extensionSections = {};
+        let draggedSectionId = null;
+        let extensionsLoaded = false;
+
+        async function loadExtensions() {
+            try {
+                const res = await api('health');
+                if (res.extensions && res.extensions.length > 0) {
+                    const newSections = {};
+                    res.extensions.forEach(ext => {
+                        newSections[ext.id] = {
+                            id: ext.id,
+                            title: ext.title,
+                            icon: ext.icon,
+                            render: () => ext.html,
+                            toggleKey: `show_${ext.id}`,
+                            buttons: []
+                        };
+
+                        // Add to section_order if not present
+                        if (!config.settings.section_order) {
+                            config.settings.section_order = ['devices', 'links', 'quick_actions', 'tasks'];
+                        }
+                        if (!config.settings.section_order.includes(ext.id)) {
+                            config.settings.section_order.push(ext.id);
+                        }
+                    });
+
+                    const changed = JSON.stringify(newSections) !== JSON.stringify(extensionSections);
+                    const newExtensions = Object.keys(newSections).length > Object.keys(extensionSections).length;
+                    extensionSections = newSections;
+
+                    if (changed || !extensionsLoaded) {
+                        extensionsLoaded = true;
+                        // Save config if new extensions were added to section_order
+                        if (newExtensions) {
+                            saveConfig();
+                        }
+                        renderSections();
+                    }
+                }
+            } catch (e) {
+                console.log('Failed to load extensions:', e);
+            }
+        }
+
+        function renderSections() {
+            const container = document.getElementById('sections-container');
+            if (!container) return;
+
+            const order = config.settings.section_order || ['devices', 'links', 'quick_actions', 'tasks'];
+            const allSections = { ...CORE_SECTIONS, ...extensionSections };
+            const isEditMode = document.body.classList.contains('edit-mode');
+
+            container.innerHTML = order
+                .filter(id => allSections[id])
+                .map(id => {
+                    const section = allSections[id];
+                    const isHidden = config.settings[section.toggleKey] === false;
+                    const isEmpty = isSectionEmpty(id);
+                    const hideSection = isEmpty && !isEditMode;
+
+                    const buttonsHtml = (section.buttons || []).map(btn =>
+                        `<button class="icon-btn section-add ${btn.class || ''}" ${btn.id ? `id="${btn.id}"` : ''} onclick="${btn.onclick}" title="${btn.title}">
+                            <i data-lucide="${btn.icon}"></i>
+                        </button>`
+                    ).join('');
+
+                    const toggleIcon = isHidden ? 'eye' : 'eye-off';
+
+                    return `
+                        <section class="section ${isHidden ? 'section-hidden' : ''} ${hideSection ? 'section-empty' : ''}"
+                                 id="${id}-section"
+                                 data-section-id="${id}"
+                                 draggable="true">
+                            <div class="section-header">
+                                <div class="section-header-left">
+                                    <span class="section-title">${escapeHTML(section.title)}</span>
+                                    <button class="icon-btn section-add section-toggle" id="${id}-toggle" title="${isHidden ? 'Show' : 'Hide'} section" onclick="toggleSection('${id}')">
+                                        <i data-lucide="${toggleIcon}"></i>
+                                    </button>
+                                </div>
+                                ${buttonsHtml}
+                            </div>
+                            <div class="section-content" id="${id}-content">
+                                ${section.render()}
+                            </div>
+                        </section>
+                    `;
+                }).join('');
+
+            refreshIcons();
+            applyMonochrome();
+            attachSectionDragHandlers();
+        }
+
+        function isSectionEmpty(id) {
+            switch(id) {
+                case 'links': return !config.links || config.links.length === 0;
+                case 'quick_actions': return !config.quick_actions || config.quick_actions.length === 0;
+                case 'devices': return !config.devices || config.devices.length === 0;
+                case 'tasks': return !config.tasks || config.tasks.length === 0;
+                default: return false;
+            }
+        }
+
+        function attachSectionDragHandlers() {
+            document.querySelectorAll('#sections-container .section').forEach(section => {
+                section.ondragstart = sectionDragStart;
+                section.ondragover = sectionDragOver;
+                section.ondragleave = sectionDragLeave;
+                section.ondrop = sectionDrop;
+                section.ondragend = sectionDragEnd;
+            });
+        }
+
+        function sectionDragStart(e) {
+            if (!document.body.classList.contains('edit-mode')) {
+                e.preventDefault();
+                return;
+            }
+            draggedSectionId = e.target.closest('.section').dataset.sectionId;
+            e.target.closest('.section').classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function sectionDragOver(e) {
+            if (!draggedSectionId) return;
+            e.preventDefault();
+            const target = e.target.closest('.section');
+            if (target && target.dataset.sectionId !== draggedSectionId) {
+                target.classList.add('drag-over');
+            }
+        }
+
+        function sectionDragLeave(e) {
+            const target = e.target.closest('.section');
+            if (target) target.classList.remove('drag-over');
+        }
+
+        function sectionDrop(e) {
+            e.preventDefault();
+            const target = e.target.closest('.section');
+            if (!target || !draggedSectionId) return;
+
+            const targetId = target.dataset.sectionId;
+            if (targetId === draggedSectionId) return;
+
+            let order = config.settings.section_order || ['devices', 'links', 'quick_actions', 'tasks'];
+            const fromIdx = order.indexOf(draggedSectionId);
+            const toIdx = order.indexOf(targetId);
+
+            if (fromIdx === -1 || toIdx === -1) return;
+
+            order.splice(fromIdx, 1);
+            order.splice(toIdx, 0, draggedSectionId);
+
+            config.settings.section_order = order;
+            saveConfig();
+            renderSections();
+        }
+
+        function sectionDragEnd(e) {
+            draggedSectionId = null;
+            document.querySelectorAll('.section').forEach(el => {
+                el.classList.remove('dragging', 'drag-over');
+            });
+        }
+
+        // === Section Content Renderers ===
+
+        function renderLinksContent() {
+            return `<div class="cards-grid" id="cards-grid">
+                ${config.links.map(link => `
+                    <a href="${link.url}" target="_blank" class="card-item" data-id="${link.id}"
+                       draggable="true" ondragstart="linkDragStart(event)" ondragover="linkDragOver(event)" ondragleave="linkDragLeave(event)" ondrop="linkDrop(event)" ondragend="linkDragEnd(event)">
+                        ${getIcon(escapeHTML(link.icon || 'link'))}
+                        <div class="card-text">
+                            <span class="card-name">${escapeHTML(link.name)}</span>
+                            ${link.note ? `<span class="card-note">${escapeHTML(link.note)}</span>` : ''}
+                        </div>
+                        <div class="link-edit" onclick="event.preventDefault(); editLink('${link.id}')">${ICON_EDIT}</div>
+                        <div class="link-delete" onclick="event.preventDefault(); deleteLink('${link.id}')">${ICON_DELETE}</div>
+                    </a>
+                `).join('')}
+            </div>`;
+        }
+
+        function renderActionsContent() {
+            const actions = config.quick_actions || [];
+            if (actions.length === 0) return '<div class="cards-grid" id="actions-grid"></div>';
+            return `<div class="cards-grid" id="actions-grid">
+                ${actions.map(qa => {
+                    const exists = qa.exists !== false;
+                    return `
+                        <div class="card-item ${!exists ? 'missing' : ''}" data-id="${qa.id}"
+                             draggable="true" ondragstart="qaDragStart(event)" ondragover="qaDragOver(event)" ondragleave="qaDragLeave(event)" ondrop="qaDrop(event)" ondragend="qaDragEnd(event)"
+                             onclick="runQuickAction('${qa.id}')">
+                            ${getIcon(escapeHTML(qa.icon || 'terminal'))}
+                            <div class="card-text">
+                                <span class="card-name">${escapeHTML(qa.name)}</span>
+                                ${qa.note ? `<span class="card-note">${escapeHTML(qa.note)}</span>` : ''}
+                            </div>
+                            <div class="link-edit" onclick="event.stopPropagation(); editQuickAction('${qa.id}')">${ICON_EDIT}</div>
+                            <div class="link-delete" onclick="event.stopPropagation(); deleteQuickAction('${qa.id}')">${ICON_DELETE}</div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>`;
+        }
+
+        function renderDevicesContent() {
+            return `<div id="devices-list">
+                ${config.devices.map(dev => {
+                const stats = deviceStats[dev.id] || {};
+                const online = stats.online;
+                const s = stats.stats || {};
+
+                const isHost = dev.is_host;
+                const containerStats = stats.containers || {};
+
+                // Device actions (Wake, Shutdown, Connections)
+                let actions = [];
+                if (!isHost && !online && dev.wol?.mac) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doWake('${dev.id}')">Wake</button>`);
+                if (dev.connect?.rdp) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doConnect('${dev.id}', 'rdp')" ${!online ? 'disabled' : ''}>RDP</button>`);
+                if (dev.connect?.vnc) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doConnect('${dev.id}', 'vnc')" ${!online ? 'disabled' : ''}>VNC</button>`);
+                if (dev.connect?.web) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doConnect('${dev.id}', 'web')" ${!online ? 'disabled' : ''}>Web</button>`);
+                // Host can always shutdown/suspend, remote devices need SSH
+                if (isHost || dev.ssh?.user) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doSuspend('${dev.id}')" ${!online ? 'disabled' : ''}>Suspend</button>`);
+                if (isHost || dev.ssh?.user) actions.push(`<button class="device-action danger" onclick="event.stopPropagation(); doShutdown('${dev.id}')" ${!online ? 'disabled' : ''}>Shutdown</button>`);
+
+                // Docker containers section
+                const containers = dev.docker?.containers || [];
+                let containersToggle = '';
+                let containersListHtml = '';
+                if (containers.length > 0) {
+                    // Count running vs stopped
+                    let runningCount = 0;
+                    let stoppedCount = 0;
+                    containers.forEach(c => {
+                        const cName = typeof c === 'string' ? c : c.name;
+                        const cStatus = containerStats[cName];
+                        if (cStatus === 'running') runningCount++;
+                        else if (cStatus !== undefined) stoppedCount++;
+                    });
+
+                    // Check if expanded (default: true)
+                    const isExpanded = config.settings?.accordion?.[dev.id] !== false;
+
+                    // Toggle button for actions row
+                    containersToggle = `
+                        <span class="containers-toggle" onclick="event.stopPropagation(); toggleContainers('${dev.id}')">
+                            <span class="containers-summary" style="${isExpanded ? 'display: none;' : ''}">
+                                ${runningCount > 0 ? `<span>${runningCount}</span><span class="status-dot online"></span>` : ''}
+                                ${stoppedCount > 0 ? `<span>${stoppedCount}</span><span class="status-dot offline"></span>` : ''}
+                            </span>
+                            <svg class="containers-chevron ${isExpanded ? 'expanded' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                        </span>
+                    `;
+
+                    // Container list
+                    containersListHtml = `
+                        <div class="device-containers">
+                            <div class="containers-list ${isExpanded ? 'expanded' : ''}">
+                                ${containers.map(c => {
+                                    const cName = typeof c === 'string' ? c : c.name;
+                                    const cStatus = containerStats[cName];
+                                    const cOnline = cStatus === 'running';
+                                    const cLoading = cStatus === undefined;
+
+                                    // Connection buttons only when container is running
+                                    let connectBtns = '';
+                                    if (cOnline) {
+                                        if (c.rdp) connectBtns += `<button class="device-action" onclick="event.stopPropagation(); doContainerConnect('${dev.id}', 'rdp', '${c.rdp}')">RDP</button>`;
+                                        if (c.vnc) connectBtns += `<button class="device-action" onclick="event.stopPropagation(); doContainerConnect('${dev.id}', 'vnc', '${c.vnc}')">VNC</button>`;
+                                        if (c.web) connectBtns += `<button class="device-action" onclick="event.stopPropagation(); doContainerConnect('${dev.id}', 'web', '${c.web}')">Web</button>`;
+                                    }
+
+                                    // Single Start or Stop button based on state
+                                    const actionBtn = cLoading ?
+                                        `<span class="container-spinner active"></span>` :
+                                        (cOnline ?
+                                            `<button class="device-action container-stop" onclick="event.stopPropagation(); doDockerContainer('${dev.id}', '${cName}', 'stop')">Stop</button>` :
+                                            `<button class="device-action container-start" onclick="event.stopPropagation(); doDockerContainer('${dev.id}', '${cName}', 'start')">Start</button>`
+                                        );
+
+                                    return `
+                                        <div class="container-row">
+                                            <span class="container-name ${cOnline ? 'container-online' : ''}">${cName}</span>
+                                            <div class="container-actions">
+                                                ${connectBtns ? `<span class="connect-group">${connectBtns}</span>` : ''}
+                                                ${actionBtn}
+                                                <span class="container-spinner" id="spinner-${dev.id}-${cName}"></span>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // RAM percentage for bar
+                const ramPercent = s.ram_total ? Math.round(s.ram_used / s.ram_total * 100) : 0;
+
+                return `
+                <div class="device-card" data-id="${dev.id}" draggable="true" ondragstart="deviceDragStart(event)" ondragover="deviceDragOver(event)" ondragleave="deviceDragLeave(event)" ondrop="deviceDrop(event)" ondragend="deviceDragEnd(event)">
+                    <div class="device-header">
+                        <div class="device-info">
+                            <div class="device-icon">${getIcon(escapeHTML(dev.icon || 'server'))}</div>
+                            <span class="device-name">${escapeHTML(dev.name)}</span>
+                            <span class="device-status-indicator">
+                                <span class="status-dot ${online === undefined ? 'loading' : (online ? 'online' : 'offline')}"></span>
+                                ${s.uptime ? `<span class="device-uptime">${s.uptime}</span>` : ''}
+                            </span>
+                        </div>
+                    </div>
+                    ${online && (s.cpu !== undefined) ? `
+                        <div class="device-stats-bars${showValues ? ' show-values' : ''}" onclick="toggleStatsMode(this)">
+                            <div class="stat-bar-group">
+                                <span class="stat-label">CPU</span>
+                                <div class="stat-bar"><div class="stat-bar-fill" style="width: ${s.cpu}%; background: ${getBarColor(s.cpu)}"></div></div>
+                                <span class="stat-value">${s.cpu}%</span>
+                            </div>
+                            <div class="stat-bar-group">
+                                <span class="stat-label">RAM</span>
+                                <div class="stat-bar"><div class="stat-bar-fill" style="width: ${ramPercent}%; background: ${getBarColor(ramPercent)}"></div></div>
+                                <span class="stat-value">${ramPercent}%</span>
+                            </div>
+                            ${s.temp ? `
+                            <div class="stat-bar-group">
+                                <span class="stat-label">TEMP</span>
+                                <div class="stat-bar"><div class="stat-bar-fill" style="width: ${s.temp}%; background: ${getBarColor(s.temp)}"></div></div>
+                                <span class="stat-value">${s.temp}°</span>
+                            </div>
+                            ` : ''}
+                            <button class="stats-modal-btn" onclick="event.stopPropagation(); openStatsModal('${dev.id}')" title="Device Stats">
+                                <i data-lucide="square-activity"></i>
+                            </button>
+                        </div>
+                    ` : ''}
+                    ${actions.length || containersToggle ? `
+                        <div class="device-actions">
+                            ${actions.join('<span class="action-separator">·</span>')}
+                            ${containersToggle}
+                        </div>
+                    ` : ''}
+                    ${containersListHtml}
+                    <div class="device-edit" onclick="editDevice('${dev.id}')">${ICON_EDIT}</div>
+                    ${!isHost ? `<div class="device-delete" onclick="deleteDevice('${dev.id}')">${ICON_DELETE}</div>` : ''}
+                </div>
+                `;
+            }).join('')}
+            </div>`;
+        }
+
+        function renderTasksContent() {
+            const tasks = config.tasks || [];
+
+            if (tasks.length === 0) {
+                return `<div id="tasks-list"><div class="task-empty">No tasks configured. Click + to add one.</div></div>`;
+            }
+
+            return `<div id="tasks-list">
+                ${tasks.map(task => {
+                const isRunning = task._running || runningTasks.includes(task.id);
+                const statusClass = isRunning ? 'running' :
+                    !task.enabled ? 'paused' :
+                    task.last_status === 'success' ? 'success' :
+                    task.last_status === 'skipped' ? 'warning' :
+                    task.last_status === 'failed' ? 'error' : 'success';
+
+                const statusText = isRunning ? 'Running...' :
+                    !task.enabled ? 'Paused' :
+                    task.next_run ? `Next: ${formatTimeUntil(task.next_run)}` : 'Scheduled';
+
+                const lastStatusText = task.last_status === 'skipped' ? `Skipped: ${task.last_error || 'source offline'}` :
+                    task.last_status === 'failed' ? `Failed: ${task.last_error || 'unknown error'}` :
+                    task.last_status === 'success' ? 'OK' : '';
+
+                const scheduleText = formatSchedule(task.schedule);
+                const typeIcon = task.type === 'backup' ? 'folder-sync' :
+                                 task.type === 'shutdown' ? 'power-off' :
+                                 task.type === 'suspend' ? 'moon' :
+                                 task.type === 'script' ? 'terminal' : 'power';
+
+                return `
+                <div class="task-card ${isRunning ? 'running' : ''}" data-id="${task.id}" draggable="true" ondragstart="taskDragStart(event)" ondragover="taskDragOver(event)" ondragleave="taskDragLeave(event)" ondrop="taskDrop(event)" ondragend="taskDragEnd(event)">
+                    <div class="task-header">
+                        <div class="task-icon">${getIcon(typeIcon)}</div>
+                        <span class="task-name">${escapeHTML(task.name)}</span>
+                        <span class="task-schedule">${scheduleText}</span>
+                    </div>
+                    <div class="task-status">
+                        <span class="task-status-dot ${statusClass}"></span>
+                        <span>${statusText}</span>
+                        ${task.last_run ? `<span style="margin-left: auto;">${lastStatusText}${lastStatusText ? ' · ' : ''}${formatLastRun(task.last_run)}${task.last_size ? ' · ' + task.last_size : ''}</span>` : ''}
+                    </div>
+                    <div class="task-actions">
+                        <button class="task-btn" onclick="toggleTask('${task.id}')" ${isRunning ? 'disabled' : ''}>
+                            ${task.enabled ? '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause' : '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg> Resume'}
+                        </button>
+                        <button class="task-btn" onclick="runTaskNow('${task.id}')" ${isRunning ? 'disabled' : ''}>
+                            ${isRunning ? 'Running...' : '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg> Run Now'}
+                        </button>
+                    </div>
+                    <div class="task-edit" onclick="editTask('${task.id}')">${ICON_EDIT}</div>
+                    <div class="task-delete" onclick="deleteTask('${task.id}')">${ICON_DELETE}</div>
+                </div>
+                `;
+            }).join('')}
+            </div>`;
+        }
+
         // === Render Functions ===
 
         function toggleSection(section) {
             const key = `show_${section}`;
             const current = config.settings[key] !== false; // default true
             config.settings[key] = !current;
-            applySectionVisibility();
+            renderSections();
             saveConfig();
         }
 
@@ -5984,58 +6633,32 @@ def get_html_page():
         }
 
         function applySectionVisibility() {
-            const showLinks = config.settings.show_links !== false;
-            const showActions = config.settings.show_actions !== false;
-            const showDevices = config.settings.show_devices !== false;
-            const showTasks = config.settings.show_tasks !== false;
+            // Update section visibility classes without full re-render
             const isEditMode = document.body.classList.contains('edit-mode');
+            const order = config.settings.section_order || ['devices', 'links', 'quick_actions', 'tasks'];
 
-            const linksSection = document.getElementById('links-section');
-            const actionsSection = document.getElementById('actions-section');
-            const devicesSection = document.getElementById('devices-section');
-            const tasksSection = document.getElementById('tasks-section');
+            order.forEach(id => {
+                const section = document.getElementById(`${id}-section`);
+                if (!section) return;
 
-            // Empty sections only visible in edit mode
-            const linksEmpty = !config.links || config.links.length === 0;
-            const actionsEmpty = !config.quick_actions || config.quick_actions.length === 0;
+                const allSections = { ...CORE_SECTIONS, ...extensionSections };
+                const sectionDef = allSections[id];
+                if (!sectionDef) return;
 
-            // Hidden sections: collapsed with only header visible in edit mode
-            linksSection.classList.toggle('section-hidden', !showLinks);
-            linksSection.classList.toggle('section-empty', linksEmpty && !isEditMode);
-            if (actionsSection) {
-                actionsSection.classList.toggle('section-hidden', !showActions);
-                actionsSection.classList.toggle('section-empty', actionsEmpty && !isEditMode);
-            }
-            devicesSection.classList.toggle('section-hidden', !showDevices);
-            tasksSection.classList.toggle('section-hidden', !showTasks);
+                const isHidden = config.settings[sectionDef.toggleKey] === false;
+                const isEmpty = isSectionEmpty(id);
 
-            // Update toggle icons
-            const linksToggle = document.getElementById('links-toggle');
-            const actionsToggle = document.getElementById('actions-toggle');
-            const devicesToggle = document.getElementById('devices-toggle');
-            const tasksToggle = document.getElementById('tasks-toggle');
-            if (linksToggle) linksToggle.innerHTML = showLinks ? '<i data-lucide="eye-off"></i>' : '<i data-lucide="eye"></i>';
-            if (actionsToggle) actionsToggle.innerHTML = showActions ? '<i data-lucide="eye-off"></i>' : '<i data-lucide="eye"></i>';
-            if (devicesToggle) devicesToggle.innerHTML = showDevices ? '<i data-lucide="eye-off"></i>' : '<i data-lucide="eye"></i>';
-            if (tasksToggle) tasksToggle.innerHTML = showTasks ? '<i data-lucide="eye-off"></i>' : '<i data-lucide="eye"></i>';
-            refreshIcons();
+                section.classList.toggle('section-hidden', isHidden);
+                section.classList.toggle('section-empty', isEmpty && !isEditMode);
+            });
         }
 
         function renderLinks() {
-            const grid = document.getElementById('cards-grid');
-            grid.innerHTML = config.links.map(link => `
-                <a href="${link.url}" target="_blank" class="card-item" data-id="${link.id}"
-                   draggable="true" ondragstart="linkDragStart(event)" ondragover="linkDragOver(event)" ondragleave="linkDragLeave(event)" ondrop="linkDrop(event)" ondragend="linkDragEnd(event)">
-                    ${getIcon(link.icon || 'link')}
-                    <div class="card-text">
-                        <span class="card-name">${link.name}</span>
-                        ${link.note ? `<span class="card-note">${link.note}</span>` : ''}
-                    </div>
-                    <div class="link-edit" onclick="event.preventDefault(); editLink('${link.id}')">${ICON_EDIT}</div>
-                    <div class="link-delete" onclick="event.preventDefault(); deleteLink('${link.id}')">${ICON_DELETE}</div>
-                </a>
-            `).join('');
-            refreshIcons();
+            const content = document.getElementById('links-content');
+            if (content) {
+                content.innerHTML = renderLinksContent();
+                refreshIcons();
+            }
         }
 
         let draggedLinkId = null;
@@ -6095,29 +6718,11 @@ def get_html_page():
 
         // === Quick Actions ===
         function renderQuickActions() {
-            const grid = document.getElementById('actions-grid');
-            if (!grid) return;
-            const actions = config.quick_actions || [];
-            if (actions.length === 0) {
-                grid.innerHTML = '';
-                return;
+            const content = document.getElementById('quick_actions-content');
+            if (content) {
+                content.innerHTML = renderActionsContent();
+                refreshIcons();
             }
-            grid.innerHTML = actions.map(qa => {
-                const exists = qa.exists !== false;
-                return `
-                <div class="card-item${exists ? '' : ' qa-missing'}" data-id="${qa.id}"
-                   draggable="true" ondragstart="qaDragStart(event)" ondragover="qaDragOver(event)" ondragleave="qaDragLeave(event)" ondrop="qaDrop(event)" ondragend="qaDragEnd(event)"
-                   onclick="runQuickAction('${qa.id}')" style="cursor: pointer;">
-                    ${getIcon(qa.icon || 'terminal')}
-                    <div class="card-text">
-                        <span class="card-name">${qa.name}</span>
-                        ${qa.note ? `<span class="card-note">${qa.note}</span>` : ''}
-                    </div>
-                    <div class="action-edit" onclick="event.stopPropagation(); editQuickAction('${qa.id}')">${ICON_EDIT}</div>
-                    <div class="action-delete" onclick="event.stopPropagation(); deleteQuickAction('${qa.id}')">${ICON_DELETE}</div>
-                </div>`;
-            }).join('');
-            refreshIcons();
         }
 
         async function runQuickAction(id) {
@@ -6382,151 +6987,11 @@ def get_html_page():
         }
 
         function renderDevices() {
-            const list = document.getElementById('devices-list');
-            
-            list.innerHTML = config.devices.map(dev => {
-                const stats = deviceStats[dev.id] || {};
-                const online = stats.online;
-                const s = stats.stats || {};
-
-                const isHost = dev.is_host;
-                const containerStats = stats.containers || {};
-
-                // Device actions (Wake, Shutdown, Connections)
-                let actions = [];
-                if (!isHost && !online && dev.wol?.mac) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doWake('${dev.id}')">Wake</button>`);
-                if (dev.connect?.rdp) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doConnect('${dev.id}', 'rdp')" ${!online ? 'disabled' : ''}>RDP</button>`);
-                if (dev.connect?.vnc) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doConnect('${dev.id}', 'vnc')" ${!online ? 'disabled' : ''}>VNC</button>`);
-                if (dev.connect?.web) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doConnect('${dev.id}', 'web')" ${!online ? 'disabled' : ''}>Web</button>`);
-                // Host can always shutdown/suspend, remote devices need SSH
-                if (isHost || dev.ssh?.user) actions.push(`<button class="device-action" onclick="event.stopPropagation(); doSuspend('${dev.id}')" ${!online ? 'disabled' : ''}>Suspend</button>`);
-                if (isHost || dev.ssh?.user) actions.push(`<button class="device-action danger" onclick="event.stopPropagation(); doShutdown('${dev.id}')" ${!online ? 'disabled' : ''}>Shutdown</button>`);
-
-                // Docker containers section
-                const containers = dev.docker?.containers || [];
-                let containersToggle = '';
-                let containersListHtml = '';
-                if (containers.length > 0) {
-                    // Count running vs stopped
-                    let runningCount = 0;
-                    let stoppedCount = 0;
-                    containers.forEach(c => {
-                        const cName = typeof c === 'string' ? c : c.name;
-                        const cStatus = containerStats[cName];
-                        if (cStatus === 'running') runningCount++;
-                        else if (cStatus !== undefined) stoppedCount++;
-                    });
-
-                    // Check if expanded (default: true)
-                    const isExpanded = config.settings?.accordion?.[dev.id] !== false;
-
-                    // Toggle button for actions row
-                    containersToggle = `
-                        <span class="containers-toggle" onclick="event.stopPropagation(); toggleContainers('${dev.id}')">
-                            <span class="containers-summary" style="${isExpanded ? 'display: none;' : ''}">
-                                ${runningCount > 0 ? `<span>${runningCount}</span><span class="status-dot online"></span>` : ''}
-                                ${stoppedCount > 0 ? `<span>${stoppedCount}</span><span class="status-dot offline"></span>` : ''}
-                            </span>
-                            <svg class="containers-chevron ${isExpanded ? 'expanded' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                        </span>
-                    `;
-
-                    // Container list
-                    containersListHtml = `
-                        <div class="device-containers">
-                            <div class="containers-list ${isExpanded ? 'expanded' : ''}">
-                                ${containers.map(c => {
-                                    const cName = typeof c === 'string' ? c : c.name;
-                                    const cStatus = containerStats[cName];
-                                    const cOnline = cStatus === 'running';
-                                    const cLoading = cStatus === undefined;
-
-                                    // Connection buttons only when container is running
-                                    let connectBtns = '';
-                                    if (cOnline) {
-                                        if (c.rdp) connectBtns += `<button class="device-action" onclick="event.stopPropagation(); doContainerConnect('${dev.id}', 'rdp', '${c.rdp}')">RDP</button>`;
-                                        if (c.vnc) connectBtns += `<button class="device-action" onclick="event.stopPropagation(); doContainerConnect('${dev.id}', 'vnc', '${c.vnc}')">VNC</button>`;
-                                        if (c.web) connectBtns += `<button class="device-action" onclick="event.stopPropagation(); doContainerConnect('${dev.id}', 'web', '${c.web}')">Web</button>`;
-                                    }
-
-                                    // Single Start or Stop button based on state
-                                    const actionBtn = cLoading ?
-                                        `<span class="container-spinner active"></span>` :
-                                        (cOnline ?
-                                            `<button class="device-action container-stop" onclick="event.stopPropagation(); doDockerContainer('${dev.id}', '${cName}', 'stop')">Stop</button>` :
-                                            `<button class="device-action container-start" onclick="event.stopPropagation(); doDockerContainer('${dev.id}', '${cName}', 'start')">Start</button>`
-                                        );
-
-                                    return `
-                                        <div class="container-row">
-                                            <span class="container-name ${cOnline ? 'container-online' : ''}">${cName}</span>
-                                            <div class="container-actions">
-                                                ${connectBtns ? `<span class="connect-group">${connectBtns}</span>` : ''}
-                                                ${actionBtn}
-                                                <span class="container-spinner" id="spinner-${dev.id}-${cName}"></span>
-                                            </div>
-                                        </div>
-                                    `;
-                                }).join('')}
-                            </div>
-                        </div>
-                    `;
-                }
-
-                // RAM percentage for bar
-                const ramPercent = s.ram_total ? Math.round(s.ram_used / s.ram_total * 100) : 0;
-
-                return `
-                <div class="device-card" data-id="${dev.id}" draggable="true" ondragstart="deviceDragStart(event)" ondragover="deviceDragOver(event)" ondragleave="deviceDragLeave(event)" ondrop="deviceDrop(event)" ondragend="deviceDragEnd(event)">
-                    <div class="device-header">
-                        <div class="device-info">
-                            <div class="device-icon">${getIcon(dev.icon || 'server')}</div>
-                            <span class="device-name">${dev.name}</span>
-                            <span class="device-status-indicator">
-                                <span class="status-dot ${online === undefined ? 'loading' : (online ? 'online' : 'offline')}"></span>
-                                ${s.uptime ? `<span class="device-uptime">${s.uptime}</span>` : ''}
-                            </span>
-                        </div>
-                    </div>
-                    ${online && (s.cpu !== undefined) ? `
-                        <div class="device-stats-bars${showValues ? ' show-values' : ''}" onclick="toggleStatsMode(this)">
-                            <div class="stat-bar-group">
-                                <span class="stat-label">CPU</span>
-                                <div class="stat-bar"><div class="stat-bar-fill" style="width: ${s.cpu}%; background: ${getBarColor(s.cpu)}"></div></div>
-                                <span class="stat-value">${s.cpu}%</span>
-                            </div>
-                            <div class="stat-bar-group">
-                                <span class="stat-label">RAM</span>
-                                <div class="stat-bar"><div class="stat-bar-fill" style="width: ${ramPercent}%; background: ${getBarColor(ramPercent)}"></div></div>
-                                <span class="stat-value">${ramPercent}%</span>
-                            </div>
-                            ${s.temp ? `
-                            <div class="stat-bar-group">
-                                <span class="stat-label">TEMP</span>
-                                <div class="stat-bar"><div class="stat-bar-fill" style="width: ${s.temp}%; background: ${getBarColor(s.temp)}"></div></div>
-                                <span class="stat-value">${s.temp}°</span>
-                            </div>
-                            ` : ''}
-                            <button class="stats-modal-btn" onclick="event.stopPropagation(); openStatsModal('${dev.id}')" title="Device Stats">
-                                <i data-lucide="square-activity"></i>
-                            </button>
-                        </div>
-                    ` : ''}
-                    ${actions.length || containersToggle ? `
-                        <div class="device-actions">
-                            ${actions.join('<span class="action-separator">·</span>')}
-                            ${containersToggle}
-                        </div>
-                    ` : ''}
-                    ${containersListHtml}
-                    <div class="device-edit" onclick="editDevice('${dev.id}')">${ICON_EDIT}</div>
-                    ${!isHost ? `<div class="device-delete" onclick="deleteDevice('${dev.id}')">${ICON_DELETE}</div>` : ''}
-                </div>
-                `;
-            }).join('');
-            refreshIcons();
+            const content = document.getElementById('devices-content');
+            if (content) {
+                content.innerHTML = renderDevicesContent();
+                refreshIcons();
+            }
         }
 
         // === Container Accordion ===
@@ -7171,62 +7636,11 @@ def get_html_page():
         let wizardStep = 1;
 
         function renderTasks() {
-            const list = document.getElementById('tasks-list');
-            const tasks = config.tasks || [];
-
-            if (tasks.length === 0) {
-                list.innerHTML = '<div class="task-empty">No tasks configured. Click + to add one.</div>';
-                return;
+            const content = document.getElementById('tasks-content');
+            if (content) {
+                content.innerHTML = renderTasksContent();
+                refreshIcons();
             }
-
-            list.innerHTML = tasks.map(task => {
-                const isRunning = task._running || runningTasks.includes(task.id);
-                const statusClass = isRunning ? 'running' :
-                    !task.enabled ? 'paused' :
-                    task.last_status === 'success' ? 'success' :
-                    task.last_status === 'skipped' ? 'warning' :
-                    task.last_status === 'failed' ? 'error' : 'success';
-
-                const statusText = isRunning ? 'Running...' :
-                    !task.enabled ? 'Paused' :
-                    task.next_run ? `Next: ${formatTimeUntil(task.next_run)}` : 'Scheduled';
-
-                const lastStatusText = task.last_status === 'skipped' ? `Skipped: ${task.last_error || 'source offline'}` :
-                    task.last_status === 'failed' ? `Failed: ${task.last_error || 'unknown error'}` :
-                    task.last_status === 'success' ? 'OK' : '';
-
-                const scheduleText = formatSchedule(task.schedule);
-                const typeIcon = task.type === 'backup' ? 'folder-sync' :
-                                 task.type === 'shutdown' ? 'power-off' :
-                                 task.type === 'suspend' ? 'moon' :
-                                 task.type === 'script' ? 'terminal' : 'power';
-
-                return `
-                <div class="task-card ${isRunning ? 'running' : ''}" data-id="${task.id}" draggable="true" ondragstart="taskDragStart(event)" ondragover="taskDragOver(event)" ondragleave="taskDragLeave(event)" ondrop="taskDrop(event)" ondragend="taskDragEnd(event)">
-                    <div class="task-header">
-                        <div class="task-icon">${getIcon(typeIcon)}</div>
-                        <span class="task-name">${task.name}</span>
-                        <span class="task-schedule">${scheduleText}</span>
-                    </div>
-                    <div class="task-status">
-                        <span class="task-status-dot ${statusClass}"></span>
-                        <span>${statusText}</span>
-                        ${task.last_run ? `<span style="margin-left: auto;">${lastStatusText}${lastStatusText ? ' · ' : ''}${formatLastRun(task.last_run)}${task.last_size ? ' · ' + task.last_size : ''}</span>` : ''}
-                    </div>
-                    <div class="task-actions">
-                        <button class="task-btn" onclick="toggleTask('${task.id}')" ${isRunning ? 'disabled' : ''}>
-                            ${task.enabled ? '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause' : '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg> Resume'}
-                        </button>
-                        <button class="task-btn" onclick="runTaskNow('${task.id}')" ${isRunning ? 'disabled' : ''}>
-                            ${isRunning ? 'Running...' : '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg> Run Now'}
-                        </button>
-                    </div>
-                    <div class="task-edit" onclick="editTask('${task.id}')">${ICON_EDIT}</div>
-                    <div class="task-delete" onclick="deleteTask('${task.id}')">${ICON_DELETE}</div>
-                </div>
-                `;
-            }).join('');
-            refreshIcons();
         }
 
         function formatSchedule(schedule) {
@@ -8551,13 +8965,8 @@ def get_html_page():
                 config = res.config;
                 runningTasks = res.running_tasks || [];
                 if (res.auth_enabled) document.getElementById('logout-btn').style.display = '';
-                applySectionVisibility();
-                applyMonochrome();
                 initTheme();
-                renderLinks();
-                renderQuickActions();
-                renderDevices();
-                renderTasks();
+                renderSections();
             }
         }
         
@@ -8566,14 +8975,13 @@ def get_html_page():
                 api(`device/${dev.id}/status`)
                     .then(res => {
                         deviceStats[dev.id] = res;
-                        renderDevices();
                     })
                     .catch(() => {
                         deviceStats[dev.id] = { online: false, stats: null, containers: {} };
-                        renderDevices();
                     })
             );
             await Promise.all(promises);
+            renderDevices();
         }
         
         
@@ -8582,11 +8990,8 @@ def get_html_page():
             editMode = !editMode;
             document.body.classList.toggle('edit-mode', editMode);
             document.getElementById('edit-toggle').classList.toggle('active', editMode);
-            applySectionVisibility();
+            renderSections();
         };
-        
-        document.getElementById('add-link').onclick = () => openLinkModal();
-        document.getElementById('add-device').onclick = () => openDeviceModal();
 
         document.getElementById('link-form').onsubmit = saveLink;
         document.getElementById('device-form').onsubmit = saveDevice;
@@ -8602,10 +9007,12 @@ def get_html_page():
         function startPolling() {
             loadDeviceStatus();
             renderTasks();
+            loadExtensions();
             if (!deviceInterval) {
                 deviceInterval = setInterval(() => {
                     loadDeviceStatus();
                     renderTasks();
+                    loadExtensions();
                 }, 5000);
             }
         }
