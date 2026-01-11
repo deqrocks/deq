@@ -36,13 +36,15 @@ connected to a native Android app, Wear OS, and Android Auto.
 
 ## Features
 
-- **Onboarding** – Automatic device and container discovery
-discovery
+- **Onboarding** – Automatic device and container population
 - **Native Android App** - Background monitoring, push notifications, widgets, Android Auto, Wear OS
+- **DeQ Nodes** - Devices with app connect to a node network that can WOL your server when you're not at home
 - **Device Control** - Wake-on-LAN, shutdown, suspend, Docker start/stop
 - **Device Monitoring** - CPU load, temp, SMART... with alarm thresholds
 - **File Manager** - Dual-pane browser, copy/move/upload between devices
 - **Scheduled Tasks** - Wizard guided automated backups, wake, shutdown, and scripts
+- **Extension API** - Build your own widgets or use extensions built by the community
+- **HTTP API** - Similar to a REST API, allows for example Home Assistant or Tasker access to what DeQ can do
 - **Theming** - Custom colors, wallpapers, transparency effects
 - **Quick Stuff** - Bookmark and script runner buttons with support for Lucide, Dash...
 - **PWA Support** - Install as app on any device
