@@ -6855,7 +6855,7 @@ def get_html_page():
                 if (!checkbox.checked) return;
                 const path = checkbox.dataset.path;
                 const inputs = row.querySelectorAll('input[type="text"]');
-                const name = inputs[0].value || checkbox.dataset.name.replace(/\.[^/.]+$/, '');
+                const name = inputs[0].value || checkbox.dataset.name.replace(/\\.[^/.]+$/, '');
                 const icon = inputs[1].value || 'terminal';
                 config.quick_actions = config.quick_actions || [];
                 config.quick_actions.push({
