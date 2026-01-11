@@ -43,8 +43,8 @@ connected to a native Android app, Wear OS, and Android Auto.
 - **Device Monitoring** - CPU load, temp, SMART... with alarm thresholds
 - **File Manager** - Dual-pane browser, copy/move/upload between devices
 - **Scheduled Tasks** - Wizard guided automated backups, wake, shutdown, and scripts
-- **Extension API** - Build your own widgets or use extensions built by the community
-- **HTTP API** - Similar to a REST API, allows for example Home Assistant or Tasker access to what DeQ can do
+- **Extension API** - Write Python extensions. Build custom GUIs. Make DeQ whatever you need.
+- **HTTP API** - Connect Home Assistant, Tasker, or build your own automations
 - **Theming** - Custom colors, wallpapers, transparency effects
 - **Quick Stuff** - Bookmark and script runner buttons with support for Lucide, Dash...
 - **PWA Support** - Install as app on any device
@@ -92,6 +92,16 @@ as well as sensors and context from your mobile devices.
 For example, the Android app can automatically put selected containers or servers
 to sleep when you plug in your phone at night —
 and wake them again when you unplug it in the morning.
+
+### Your Control Layer
+
+The core remains lean. How you extend it is up to you.
+
+HTTP API connects Home Assistant, Tasker, or your custom scripts.
+Extension API lets you write Python that adds custom sections to the web interface.
+Drop shell scripts into `/opt/deq/scripts/` for quick automation.
+
+DeQ provides the infrastructure. You build what you need.
 
 ![DeQ Connectivity](assets/DeQ-connectivity.svg)
 ---
