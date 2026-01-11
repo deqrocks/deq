@@ -1,0 +1,39 @@
+[project]
+name = "deq"
+version = "0.1.0"
+description = "A single Python file providing SSH-based control via a web interface, connected to a native Android app, Wear OS, and Android Auto. "
+readme = "README.md"
+authors = [
+    { name = "deq"}
+]
+
+# Public libraries should be more lenient
+# Internal stuff should enforce ~=3.13.0!
+requires-python = ">=3.13"
+dependencies = [
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=0.0.0",
+    "pytest-cov>=0.0.0",
+]
+
+
+[build-system]
+requires = ["uv_build>=0.8.2,<0.11.0"]
+build-backend = "uv_build"
+
+[project.scripts]
+deq = "deq.server:main"
+
+[tool.pytest.ini_options]
+addopts = "--doctest-modules --cov=src/deq  --cov-report=term-missing --cov-report=html"
+testpaths = [
+    "tests",
+]
+
+[tool.uv.workspace]
+members = [
+    "test",
+]
