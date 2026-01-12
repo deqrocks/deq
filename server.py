@@ -32,7 +32,7 @@ SCRIPTS_DIR = f"{DATA_DIR}/scripts"
 PASSWORD_FILE = f"{DATA_DIR}/.password"
 SESSION_SECRET_FILE = f"{DATA_DIR}/.session_secret"
 SESSION_COOKIE_NAME = "deq_session"
-VERSION = "0.9.12"
+VERSION = "0.9.13"
 
 # SSH ControlMaster for connection reuse (reduces overhead when File Manager makes many SSH calls)
 SSH_CONTROL_OPTS = ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/deq-ssh-%r@%h:%p", "-o", "ControlPersist=60", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2"]
@@ -3031,18 +3031,24 @@ def get_html_page():
     <link rel="apple-touch-icon" href="/icon.svg">
     <style>
         @font-face {
-            font-family: 'JetBrains Mono';
-            src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+            font-family: 'DeQ Font';
+            src: url('/fonts/DeQ-Font-Light.otf') format('opentype');
+            font-weight: 300;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'DeQ Font';
+            src: url('/fonts/DeQ-Font-Regular.otf') format('opentype');
             font-weight: 400;
             font-style: normal;
         }
         @font-face {
-            font-family: 'JetBrains Mono';
-            src: url('/fonts/JetBrainsMono-Medium.woff2') format('woff2');
-            font-weight: 500;
+            font-family: 'DeQ Font';
+            src: url('/fonts/DeQ-Font-Bold.otf') format('opentype');
+            font-weight: 700;
             font-style: normal;
         }
-        
+
         :root {
             --bg-primary: #161616;
             --bg-secondary: #151515;
@@ -3060,7 +3066,7 @@ def get_html_page():
         * { box-sizing: border-box; margin: 0; padding: 0; }
         
         body {
-            font-family: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+            font-family: 'DeQ Font', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: var(--bg-primary);
             color: var(--text-primary);
             min-height: 100vh;
@@ -3071,8 +3077,16 @@ def get_html_page():
 
         .container {
             width: 100%;
-            padding: 0 6px;
+            padding: 10px;
             box-sizing: border-box;
+        }
+
+        @media (min-width: 1000px) {
+            .container {
+                max-width: var(--max-width-desktop, 100%);
+                margin-left: auto;
+                margin-right: auto;
+            }
         }
         
         /* Header */
@@ -3086,7 +3100,7 @@ def get_html_page():
         .logo {
             display: flex;
             align-items: center;
-            padding: 8px;
+            padding: 5px;
             color: var(--text-primary);
         }
 
@@ -3134,7 +3148,8 @@ def get_html_page():
         }
 
         #files-btn svg,
-        #edit-toggle svg {
+        #edit-toggle svg,
+        #logout-btn svg {
             width: 32px;
             height: 32px;
         }
@@ -3142,7 +3157,8 @@ def get_html_page():
         /* Header icon backgrounds with glass effect */
         .logo,
         #files-btn,
-        #edit-toggle {
+        #edit-toggle,
+        #logout-btn {
             background: var(--bg-secondary);
             border-radius: 12px;
             backdrop-filter: blur(var(--glass-blur, 0px));
@@ -3152,7 +3168,8 @@ def get_html_page():
         }
 
         #files-btn,
-        #edit-toggle {
+        #edit-toggle,
+        #logout-btn {
             color: var(--text-primary);
         }
 
@@ -3166,6 +3183,7 @@ def get_html_page():
         .logo svg .icon-accent,
         #files-btn svg .icon-accent,
         #edit-toggle svg .icon-accent,
+        #logout-btn svg .icon-accent,
         #onboarding-modal .icon-accent {
             stroke: var(--accent);
         }
@@ -3209,6 +3227,10 @@ def get_html_page():
         .edit-mode .section-header {
             border-color: var(--border);
             background: var(--bg-secondary);
+        }
+
+        .hide-headers .section-header {
+            display: none;
         }
 
         .section-header-left {
@@ -4050,7 +4072,7 @@ def get_html_page():
         .device-actions {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
+            gap: 16px;
         }
         
         .device-action {
@@ -4079,10 +4101,6 @@ def get_html_page():
 
         .device-action.danger:hover:not(:disabled) {
             color: var(--danger);
-        }
-        
-        .action-separator {
-            color: var(--border);
         }
 
         .device-containers {
@@ -4945,6 +4963,36 @@ def get_html_page():
             transform: rotate(45deg);
         }
 
+        .theme-checkbox {
+            width: 20px;
+            height: 20px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            -webkit-appearance: none;
+            appearance: none;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .theme-checkbox:checked {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .theme-checkbox:checked::after {
+            content: '';
+            position: absolute;
+            left: 6px;
+            top: 2px;
+            width: 6px;
+            height: 11px;
+            border: solid currentColor;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg);
+            color: var(--bg-primary);
+        }
+
         .form-input:focus {
             border-color: var(--accent);
         }
@@ -5103,7 +5151,13 @@ def get_html_page():
                     </svg>
                 </button>
                 <button class="icon-btn" id="logout-btn" title="Logout" onclick="logout()" style="display:none">
-                    <i data-lucide="log-out"></i>
+                    <svg viewBox="0 0 512 512" fill="none">
+                        <rect class="icon-bg" width="512" height="512" rx="96"/>
+                        <line x1="180" y1="256" x2="320" y2="256" stroke="currentColor" stroke-width="16" stroke-linecap="round"/>
+                        <line class="icon-accent" x1="320" y1="196" x2="380" y2="256" stroke-width="16" stroke-linecap="round"/>
+                        <line class="icon-accent" x1="320" y1="316" x2="380" y2="256" stroke-width="16" stroke-linecap="round"/>
+                        <path d="M256 140 L160 140 Q140 140 140 160 L140 352 Q140 372 160 372 L256 372" stroke="currentColor" stroke-width="16" stroke-linecap="round"/>
+                    </svg>
                 </button>
             </div>
         </header>
@@ -5174,6 +5228,32 @@ def get_html_page():
                         <input type="range" id="theme-blur" min="0" max="30" value="0" class="theme-slider">
                         <span id="theme-blur-value">0px</span>
                     </div>
+                </div>
+            </div>
+            <div class="theme-row">
+                <div class="theme-group theme-group-wide">
+                    <label class="theme-label">Max Width Desktop</label>
+                    <div class="theme-slider-row">
+                        <input type="range" id="theme-max-width" min="30" max="100" value="100" class="theme-slider">
+                        <span id="theme-max-width-value">100%</span>
+                    </div>
+                    <div class="form-hint">Container width on desktop (1000px+). Mobile is always 100%.</div>
+                </div>
+            </div>
+            <div class="theme-row">
+                <div class="theme-group theme-group-wide">
+                    <label class="theme-label">Hide Section Headers</label>
+                    <label style="display:flex;align-items:center;gap:12px;cursor:pointer;">
+                        <input type="checkbox" id="theme-hide-headers" class="theme-checkbox">
+                        <span style="font-size:0.9rem;color:var(--text-secondary);">Hide all section headers</span>
+                    </label>
+                </div>
+                <div class="theme-group theme-group-wide">
+                    <label class="theme-label">Hide Borders</label>
+                    <label style="display:flex;align-items:center;gap:12px;cursor:pointer;">
+                        <input type="checkbox" id="theme-transparent-borders" class="theme-checkbox">
+                        <span style="font-size:0.9rem;color:var(--text-secondary);">Make borders transparent</span>
+                    </label>
                 </div>
             </div>
             <div class="theme-group theme-group-full">
@@ -6367,7 +6447,7 @@ def get_html_page():
                     ` : ''}
                     ${actions.length || containersToggle ? `
                         <div class="device-actions">
-                            ${actions.join('<span class="action-separator">·</span>')}
+                            ${actions.join('')}
                             ${containersToggle}
                         </div>
                     ` : ''}
@@ -6475,7 +6555,8 @@ def get_html_page():
             accent: '#2ed573',
             glass: 0,
             blur: 0,
-            wallpaper: ''
+            wallpaper: '',
+            maxWidthDesktop: 100
         };
 
         function initTheme() {
@@ -6494,14 +6575,23 @@ def get_html_page():
             // Set sliders
             const glassSlider = document.getElementById('theme-glass');
             const blurSlider = document.getElementById('theme-blur');
+            const maxWidthSlider = document.getElementById('theme-max-width');
             if (glassSlider) glassSlider.value = theme.glass || 0;
             if (blurSlider) blurSlider.value = theme.blur || 0;
+            if (maxWidthSlider) maxWidthSlider.value = theme.maxWidthDesktop || 100;
             document.getElementById('theme-glass-value').textContent = (theme.glass || 0) + '%';
             document.getElementById('theme-blur-value').textContent = (theme.blur || 0) + 'px';
+            document.getElementById('theme-max-width-value').textContent = (theme.maxWidthDesktop || 100) + '%';
 
             // Set wallpaper
             const wallpaperInput = document.getElementById('theme-wallpaper');
             if (wallpaperInput) wallpaperInput.value = theme.wallpaper || '';
+
+            // Set checkboxes
+            const hideHeadersCheckbox = document.getElementById('theme-hide-headers');
+            if (hideHeadersCheckbox) hideHeadersCheckbox.checked = theme.hideHeaders || false;
+            const transparentBordersCheckbox = document.getElementById('theme-transparent-borders');
+            if (transparentBordersCheckbox) transparentBordersCheckbox.checked = theme.transparentBorders || false;
 
             // Apply theme
             applyTheme(theme);
@@ -6548,10 +6638,27 @@ def get_html_page():
                 updateThemeEffect('blur', parseInt(e.target.value));
             });
 
+            const maxWidthSlider = document.getElementById('theme-max-width');
+            maxWidthSlider?.addEventListener('input', (e) => {
+                document.getElementById('theme-max-width-value').textContent = e.target.value + '%';
+                updateThemeEffect('maxWidthDesktop', parseInt(e.target.value));
+            });
+
             // Wallpaper
             const wallpaperInput = document.getElementById('theme-wallpaper');
             wallpaperInput?.addEventListener('change', (e) => {
                 updateThemeWallpaper(e.target.value);
+            });
+
+            // Toggles
+            const hideHeadersCheckbox = document.getElementById('theme-hide-headers');
+            hideHeadersCheckbox?.addEventListener('change', (e) => {
+                updateThemeEffect('hideHeaders', e.target.checked);
+            });
+
+            const transparentBordersCheckbox = document.getElementById('theme-transparent-borders');
+            transparentBordersCheckbox?.addEventListener('change', (e) => {
+                updateThemeEffect('transparentBorders', e.target.checked);
             });
         }
 
@@ -6596,6 +6703,10 @@ def get_html_page():
             root.style.setProperty('--glass-opacity', glass / 100);
             root.style.setProperty('--glass-blur', blur + 'px');
 
+            // Apply max width desktop
+            const maxWidthDesktop = theme.maxWidthDesktop || 100;
+            root.style.setProperty('--max-width-desktop', maxWidthDesktop + '%');
+
             // Make cards semi-transparent when glass > 0
             if (glass > 0) {
                 const cardsColor = theme.cards || defaultTheme.cards;
@@ -6609,6 +6720,17 @@ def get_html_page():
             } else {
                 document.body.style.backgroundImage = '';
                 document.body.classList.remove('has-wallpaper');
+            }
+
+            // Apply toggle effects
+            // Hide section headers
+            document.body.classList.toggle('hide-headers', theme.hideHeaders || false);
+
+            // Transparent borders
+            if (theme.transparentBorders) {
+                root.style.setProperty('--border', 'transparent');
+            } else {
+                root.style.setProperty('--border', theme.border || defaultTheme.border);
             }
         }
 
