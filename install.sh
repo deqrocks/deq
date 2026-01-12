@@ -88,7 +88,7 @@ if [ "$1" = "--remove-password" ]; then
 fi
 
 echo "================================================================"
-echo "              DeQ - Admin Dashboard Installer                   "
+echo "              DeQ - Admin Control Plane Installer                   "
 echo "================================================================"
 echo "                    DeQ RUNS AS ROOT!                           "
 echo "          DO NOT directly expose to public internet!            "
@@ -134,20 +134,15 @@ mkdir -p /opt/deq/scripts
 cp server.py /opt/deq/
 chmod +x /opt/deq/server.py
 
-# Copy fonts if present
-if [ -d "fonts" ] && [ "$(ls -A fonts 2>/dev/null)" ]; then
-    cp fonts/* /opt/deq/fonts/
-    echo "[OK] Fonts installed"
-else
-    echo "[INFO] No fonts found. Download JetBrains Mono manually:"
-    echo "       https://github.com/JetBrains/JetBrainsMono/releases"
-    echo "       Extract .woff2 files to /opt/deq/fonts/"
-fi
+# Install fonts
+rm -rf /opt/deq/fonts/*
+cp fonts/* /opt/deq/fonts/
+echo "[OK] Fonts installed"
 
 # Install systemd service
 cat > /etc/systemd/system/deq.service << EOF
 [Unit]
-Description=DeQ - Homelab Dashboard
+Description=DeQ - Homelab Control Plane
 After=network.target docker.service
 
 [Service]
