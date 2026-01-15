@@ -1,20 +1,14 @@
 # /opt/deq/extensions/deq-ressource-usage.py
 # ------------------------------------------------------------------------------
 # Name:        deq-ressource-usage.py
+# Version:     v1.1
 # Author:      deqrocks
-# Tested on:   Ubuntu 24.04
+# Tested on:   Ubuntu 24.04, Debian Bookworm
 # Requirements: DeQ only
 # Description:
 #
-# This is a DeQ Resource Usage Monitor Extension.
-# It uses DeQ's extension API: https://deq.rocks/documentation.html#extension-api
-# It displays real-time resource usage of the DeQ server process for debugging including:
-# - RAM consumption (MB) with growth delta since startup
-# - CPU load (%) calculated via interval-based measurement
-# - PID
-# - Thread count
-# - Process uptime
-# - Sparkline graph showing RAM and CPU trends
+# This is a DeQ resource usage monitor extension.
+# It uses DeQ's extension API: https://deq.rocks/documentation.html#extension-api and
 #
 # Features:
 # - Shows a sparkline graph of DeQ's ressource usage over the last 6 hours
@@ -38,8 +32,8 @@ import threading
 START_TIME = time.time()
 START_RAM = 0
 HISTORY = []
-MAX_HISTORY = 720  # 6 hour graph (720 * 30s)
-LOG_INTERVAL = 30 # 30 seconds polling interval 
+MAX_HISTORY = 720  # 6 hours (720 * 30s)
+LOG_INTERVAL = 30 # seconds 
 HISTORY_LOCK = threading.Lock()
 
 # Helper variables for interval-based CPU calculation
@@ -128,7 +122,7 @@ def render_usage():
 
         num_points = len(history_copy)
         elapsed_min = (num_points * LOG_INTERVAL) // 60
-        l_label = "Start" if num_points < MAX_HISTORY else "-6h"
+        l_label = "Start" if num_points < MAX_HISTORY else f"-{(MAX_HISTORY * LOG_INTERVAL) / 3600:g}h"
         r_label = f"now ({elapsed_min}m)" if num_points < MAX_HISTORY else "now"
 
         # --- Sparkline Logic ---
@@ -137,18 +131,14 @@ def render_usage():
         if num_points > 1:
             all_ram = [h[1] for h in history_copy]
             all_cpu = [h[2] for h in history_copy]
-
-            # RAM scaling: min to max (with 10MB minimum range for visibility)
+            
             min_r, max_r = min(all_ram), max(all_ram)
             r_range = max(max_r - min_r, 10)
-
-            # CPU scaling: 0 to max (with 10% minimum range for visibility)
             c_range = max(max(all_cpu), 10)
 
             r_pts, c_pts = "", ""
             for i, (_, r, c, _) in enumerate(history_copy):
-                x = i
-                # Flip Y axis: SVG y=0 is top, so we invert
+                x = i 
                 y_r = view_h - ((r - min_r) / r_range * view_h)
                 y_c = view_h - (c / c_range * view_h)
                 r_pts += f"{x},{y_r} "
@@ -156,8 +146,8 @@ def render_usage():
 
             sparkline_svg = f'''
             <svg width="100%" height="{view_h}" viewBox="0 0 {view_w} {view_h}" preserveAspectRatio="none" style="display:block; overflow:visible;">
-                <polyline points="{c_pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" />
-                <polyline points="{r_pts}" fill="none" stroke="var(--text-primary)" stroke-width="2" stroke-linejoin="round" />
+                <polyline points="{r_pts}" fill="none" stroke="var(--text-primary)" stroke-width="2" stroke-opacity="0.7" stroke-linejoin="round" />
+                <polyline points="{c_pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-opacity="0.7" stroke-linejoin="round" />
             </svg>'''
         else:
             sparkline_svg = f'<div style="height:{view_h}px;"></div>'
@@ -188,7 +178,7 @@ def render_usage():
                 <span>{r_label}</span>
             </div>
             
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:12px; border-top:1px solid var(--border); padding-top:12px;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:12px;">
                 <div>Threads: {curr_threads}</div>
                 <div style="text-align:right;">Uptime: {int(uptime // 60)}m</div>
                 <div style="grid-column: span 2; font-size:11px; padding-top:4px;">
