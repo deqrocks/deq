@@ -1,7 +1,7 @@
 # /opt/deq/extensions/deq-ressource-usage.py
 # ------------------------------------------------------------------------------
 # Name:        deq-ressource-usage.py
-# Version:     v1.1
+# Version:     v1.2
 # Author:      deqrocks
 # Tested on:   Ubuntu 24.04, Debian Bookworm
 # Requirements: DeQ only
@@ -31,9 +31,11 @@ import threading
 
 START_TIME = time.time()
 START_RAM = 0
+TOTAL_RAM_MB = 0
+NUM_CORES = os.cpu_count() or 1  # Fallback to 1 if None
 HISTORY = []
 MAX_HISTORY = 720  # 6 hours (720 * 30s)
-LOG_INTERVAL = 30 # seconds 
+LOG_INTERVAL = 30 # seconds
 HISTORY_LOCK = threading.Lock()
 
 # Helper variables for interval-based CPU calculation
@@ -45,8 +47,21 @@ LAST_MEASURE_TIME = 0
 collection_active = False
 collection_thread = None
 
+def get_total_ram():
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            for line in f:
+                if line.startswith('MemTotal:'):
+                    return int(line.split()[1]) // 1024  # kB to MB
+    except: pass
+    return 0
+
 def collect_metrics():
-    global collection_active, LAST_TOTAL_TICKS, LAST_COLLECTOR_TICKS, LAST_MEASURE_TIME
+    global collection_active, LAST_TOTAL_TICKS, LAST_COLLECTOR_TICKS, LAST_MEASURE_TIME, TOTAL_RAM_MB
+    
+    # Read total RAM once at startup
+    if TOTAL_RAM_MB == 0:
+        TOTAL_RAM_MB = get_total_ram()
     # Get native thread ID (tid) to read this collector thread's CPU ticks separately
     current_thread_id = threading.get_native_id()
 
@@ -81,7 +96,8 @@ def collect_metrics():
                     # Actual payload ticks = total ticks - collector thread ticks
                     delta_payload = (total_process_ticks - LAST_TOTAL_TICKS) - (collector_ticks - LAST_COLLECTOR_TICKS)
                     hertz = os.sysconf('SC_CLK_TCK')
-                    cpu_percent = (max(0, delta_payload) / hertz) / delta_time * 100
+                    # Divide by NUM_CORES to show total system load percentage
+                    cpu_percent = (max(0, delta_payload) / hertz) / delta_time * 100 / NUM_CORES
 
                 LAST_TOTAL_TICKS = total_process_ticks
                 LAST_COLLECTOR_TICKS = collector_ticks
@@ -108,6 +124,11 @@ def render_usage():
     try:
         pid = os.getpid()
         uptime = time.time() - START_TIME
+        
+        # Check if meminfo is available
+        if TOTAL_RAM_MB == 0:
+            return '<div style="padding:16px;">N/A (meminfo not available)</div>'
+        
         with HISTORY_LOCK:
             history_copy = list(HISTORY)
 
@@ -132,14 +153,17 @@ def render_usage():
             all_ram = [h[1] for h in history_copy]
             all_cpu = [h[2] for h in history_copy]
             
-            min_r, max_r = min(all_ram), max(all_ram)
-            r_range = max(max_r - min_r, 10)
-            c_range = max(max(all_cpu), 10)
+            # Scale RAM as percentage of total RAM with minimum range for visibility
+            all_ram_percent = [(r / TOTAL_RAM_MB) * 100 for r in all_ram]
+            min_rp, max_rp = min(all_ram_percent), max(all_ram_percent)
+            r_range = max(max_rp, 5)  # Minimum 5% range for visibility
+            c_range = max(max(all_cpu), 5)  # Minimum 5% range for visibility (CPU is now divided by cores)
 
             r_pts, c_pts = "", ""
             for i, (_, r, c, _) in enumerate(history_copy):
-                x = i 
-                y_r = view_h - ((r - min_r) / r_range * view_h)
+                x = i
+                ram_percent = (r / TOTAL_RAM_MB) * 100
+                y_r = view_h - (ram_percent / r_range * view_h)
                 y_c = view_h - (c / c_range * view_h)
                 r_pts += f"{x},{y_r} "
                 c_pts += f"{x},{y_c} "
