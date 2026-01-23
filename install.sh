@@ -131,7 +131,7 @@ mkdir -p /opt/deq/history
 mkdir -p /opt/deq/scripts
 
 # Copy files
-cp server.py /opt/deq/
+cp src/deq/server.py /opt/deq/
 chmod +x /opt/deq/server.py
 
 # Copy fonts if present

@@ -28,12 +28,15 @@ build-backend = "uv_build"
 deq = "deq.server:main"
 
 [tool.pytest.ini_options]
-addopts = "--doctest-modules --cov=src/deq  --cov-report=term-missing --cov-report=html"
+addopts = "--doctest-modules --cov=. --cov-fail-under=80 --cov-report=term-missing --cov-report=html --cov-report=xml"
 testpaths = [
     "tests",
+]
+markers = [
+    "elevated: tests that exercise functionality requiring root (sudo smartctl, docker, shutdown, systemctl)"
 ]
 
 [tool.uv.workspace]
 members = [
-    "test",
+    "tests",
 ]
