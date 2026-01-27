@@ -32,7 +32,7 @@ SCRIPTS_DIR = f"{DATA_DIR}/scripts"
 PASSWORD_FILE = f"{DATA_DIR}/.password"
 SESSION_SECRET_FILE = f"{DATA_DIR}/.session_secret"
 SESSION_COOKIE_NAME = "deq_session"
-VERSION = "0.9.14"
+VERSION = "0.9.15"
 
 # SSH ControlMaster for connection reuse (reduces overhead when File Manager makes many SSH calls)
 SSH_CONTROL_OPTS = ["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/deq-ssh-%r@%h:%p", "-o", "ControlPersist=60", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2"]
@@ -2714,7 +2714,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length', 0))
             data = json.loads(self.rfile.read(length))
             global CONFIG
-            CONFIG = data
+            # Handle both { config } and direct config object
+            CONFIG = data.get('config', data)
             # Update next_run for all enabled tasks
             for task in CONFIG.get('tasks', []):
                 if task.get('enabled', True):
@@ -8027,7 +8028,7 @@ def get_html_page():
             });
 
             device.alerts = alerts;
-            await api('config', 'POST', { config });
+            await api('config', 'POST', config);
             closeModal('stats-modal');
             toast('Alert settings saved');
         }
